@@ -1,0 +1,658 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {},
+  "resources": [
+    {
+      "apiVersion": "2024-05-01",
+      "location": "northeurope",
+      "name": "canonical-nat-ip",
+      "properties": {
+        "idleTimeoutInMinutes": 4,
+        "ipTags": [
+          {
+            "ipTagType": "FirstPartyUsage",
+            "tag": "/NonProd"
+          }
+        ],
+        "publicIPAddressVersion": "IPv4",
+        "publicIPAllocationMethod": "Static"
+      },
+      "sku": {
+        "name": "Standard"
+      },
+      "type": "Microsoft.Network/publicIPAddresses"
+    },
+    {
+      "apiVersion": "2024-05-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', 'canonical-nat-ip')]"
+      ],
+      "location": "northeurope",
+      "name": "canonical-nat",
+      "properties": {
+        "idleTimeoutInMinutes": 4,
+        "publicIpAddresses": [
+          {
+            "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'canonical-nat-ip')]"
+          }
+        ]
+      },
+      "sku": {
+        "name": "Standard"
+      },
+      "type": "Microsoft.Network/natGateways"
+    },
+    {
+      "apiVersion": "2024-05-01",
+      "location": "northeurope",
+      "name": "canonical-vnet-nsg",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "allow-tcp-22",
+            "properties": {
+              "access": "Allow",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "22",
+              "direction": "Inbound",
+              "priority": 100,
+              "protocol": "Tcp",
+              "sourceAddressPrefix": "CorpNetPublic",
+              "sourcePortRange": "*"
+            }
+          },
+          {
+            "name": "allow-tcp-443",
+            "properties": {
+              "access": "Allow",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "443",
+              "direction": "Inbound",
+              "priority": 110,
+              "protocol": "Tcp",
+              "sourceAddressPrefix": "CorpNetPublic",
+              "sourcePortRange": "*"
+            }
+          },
+          {
+            "name": "allow-udp-53",
+            "properties": {
+              "access": "Allow",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "53",
+              "direction": "Inbound",
+              "priority": 120,
+              "protocol": "Udp",
+              "sourceAddressPrefix": "CorpNetPublic",
+              "sourcePortRange": "*"
+            }
+          }
+        ]
+      },
+      "type": "Microsoft.Network/networkSecurityGroups"
+    },
+    {
+      "apiVersion": "2024-05-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/natGateways', 'canonical-nat')]",
+        "[resourceId('Microsoft.Network/networkSecurityGroups', 'canonical-vnet-nsg')]"
+      ],
+      "location": "northeurope",
+      "name": "canonical-vnet",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.0.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "default",
+            "properties": {
+              "addressPrefix": "10.0.0.0/24",
+              "defaultOutboundAccess": false,
+              "delegations": [
+                {
+                  "name": "aci-delegation",
+                  "properties": {
+                    "serviceName": "Microsoft.ContainerInstance/containerGroups"
+                  }
+                }
+              ],
+              "natGateway": {
+                "id": "[resourceId('Microsoft.Network/natGateways', 'canonical-nat')]"
+              },
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'canonical-vnet-nsg')]"
+              }
+            }
+          }
+        ]
+      },
+      "type": "Microsoft.Network/virtualNetworks"
+    },
+    {
+      "apiVersion": "2026-04-01",
+      "kind": "FileStorage",
+      "location": "northeurope",
+      "name": "acicanonicalfiles01",
+      "properties": {
+        "allowBlobPublicAccess": false,
+        "minimumTlsVersion": "TLS1_2",
+        "supportsHttpsTrafficOnly": true
+      },
+      "sku": {
+        "name": "Premium_LRS"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2026-04-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', 'acicanonicalfiles01')]"
+      ],
+      "name": "acicanonicalfiles01/default/workspace-1",
+      "properties": {},
+      "type": "Microsoft.Storage/storageAccounts/fileServices/shares"
+    },
+    {
+      "apiVersion": "2026-04-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', 'acicanonicalfiles01')]"
+      ],
+      "name": "acicanonicalfiles01/default/workspace-2",
+      "properties": {},
+      "type": "Microsoft.Storage/storageAccounts/fileServices/shares"
+    },
+    {
+      "apiVersion": "2023-05-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', 'canonical-vnet')]",
+        "[resourceId('Microsoft.Storage/storageAccounts', 'acicanonicalfiles01')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', 'acicanonicalfiles01', 'default', 'workspace-1')]"
+      ],
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "location": "northeurope",
+      "name": "canonical-1",
+      "properties": {
+        "confidentialComputeProperties": {
+          "ccePolicy": "Y2Fub25pY2FsLWN1c3RvbS1jY2UtcG9saWN5"
+        },
+        "containers": [
+          {
+            "name": "canonical-0-0",
+            "properties": {
+              "command": [
+                "/bin/sh",
+                "-c",
+                "set -eu\nif [ \"$(id -u)\" -ne 0 ]; then\n    echo 'aci-spinup SSH bootstrap requires the container image to run as root' >&2\n    exit 1\nfi\nprintf 'Fabric_NodeIPOrFQDN=%s\\n' \"${Fabric_NodeIPOrFQDN:-}\" >> /aci_env\nprintf 'UVM_SECURITY_CONTEXT_DIR=%s\\n' \"${UVM_SECURITY_CONTEXT_DIR:-}\" >> /aci_env\nexport DEBIAN_FRONTEND=noninteractive\napt-get update\napt-get install -y --no-install-recommends openssh-server ca-certificates\nrm -rf /var/lib/apt/lists/*\nmkdir -p /root/.ssh /run/sshd\nchmod 700 /root/.ssh\nprintf '%s\\n' \"$SSH_ADMIN_KEY\" > /root/.ssh/authorized_keys\nchmod 600 /root/.ssh/authorized_keys\nssh-keygen -A\ncat >> /etc/ssh/sshd_config <<'ACI_SPINUP_SSH_CONFIG'\nPermitRootLogin yes\nPubkeyAuthentication yes\nPasswordAuthentication no\nACI_SPINUP_SSH_CONFIG\nexec /usr/sbin/sshd -D -e     -o PermitRootLogin=yes     -o PubkeyAuthentication=yes     -o PasswordAuthentication=no"
+              ],
+              "environmentVariables": [
+                {
+                  "name": "SSH_ADMIN_KEY",
+                  "value": "ssh-ed25519 CANONICAL fixture@example.invalid"
+                }
+              ],
+              "image": "example.invalid/aci-spinup/canonical:1",
+              "ports": [
+                {
+                  "port": 22,
+                  "protocol": "TCP"
+                },
+                {
+                  "port": 443,
+                  "protocol": "TCP"
+                },
+                {
+                  "port": 53,
+                  "protocol": "UDP"
+                }
+              ],
+              "resources": {
+                "requests": {
+                  "cpu": 8,
+                  "memoryInGB": 32
+                }
+              },
+              "securityContext": {
+                "privileged": true
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/mnt/workspace",
+                  "name": "azurefiles1",
+                  "readOnly": false
+                }
+              ]
+            }
+          }
+        ],
+        "ipAddress": {
+          "ip": "10.0.0.4",
+          "ports": [
+            {
+              "port": 22,
+              "protocol": "TCP"
+            },
+            {
+              "port": 443,
+              "protocol": "TCP"
+            },
+            {
+              "port": 53,
+              "protocol": "UDP"
+            }
+          ],
+          "type": "Private"
+        },
+        "osType": "Linux",
+        "restartPolicy": "Never",
+        "sku": "Confidential",
+        "subnetIds": [
+          {
+            "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'canonical-vnet', 'default')]"
+          }
+        ],
+        "volumes": [
+          {
+            "azureFile": {
+              "shareName": "workspace-1",
+              "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', 'acicanonicalfiles01'), '2026-04-01').keys[0].value]",
+              "storageAccountName": "acicanonicalfiles01"
+            },
+            "name": "azurefiles1"
+          }
+        ]
+      },
+      "type": "Microsoft.ContainerInstance/containerGroups"
+    },
+    {
+      "apiVersion": "2024-05-01",
+      "location": "northeurope",
+      "name": "canonical-1-lb-ip",
+      "properties": {
+        "idleTimeoutInMinutes": 4,
+        "ipTags": [
+          {
+            "ipTagType": "FirstPartyUsage",
+            "tag": "/NonProd"
+          }
+        ],
+        "publicIPAddressVersion": "IPv4",
+        "publicIPAllocationMethod": "Static"
+      },
+      "sku": {
+        "name": "Standard"
+      },
+      "type": "Microsoft.Network/publicIPAddresses"
+    },
+    {
+      "apiVersion": "2024-05-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', 'canonical-1-lb-ip')]",
+        "[resourceId('Microsoft.Network/virtualNetworks', 'canonical-vnet')]",
+        "[resourceId('Microsoft.ContainerInstance/containerGroups', 'canonical-1')]"
+      ],
+      "location": "northeurope",
+      "name": "canonical-1-lb",
+      "properties": {
+        "backendAddressPools": [
+          {
+            "name": "BackendPool",
+            "properties": {
+              "loadBalancerBackendAddresses": [
+                {
+                  "name": "canonical-1-lb-backend-address",
+                  "properties": {
+                    "ipAddress": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', 'canonical-1'), '2023-05-01').ipAddress.ip]",
+                    "subnet": {
+                      "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'canonical-vnet', 'default')]"
+                    },
+                    "virtualNetwork": {
+                      "id": "[resourceId('Microsoft.Network/virtualNetworks', 'canonical-vnet')]"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "frontendIPConfigurations": [
+          {
+            "name": "LoadBalancerFrontEnd",
+            "properties": {
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'canonical-1-lb-ip')]"
+              }
+            }
+          }
+        ],
+        "loadBalancingRules": [
+          {
+            "name": "tcp-22-rule",
+            "properties": {
+              "backendAddressPool": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-1-lb'), '/backendAddressPools/BackendPool')]"
+              },
+              "backendPort": 22,
+              "disableOutboundSnat": true,
+              "enableFloatingIP": false,
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-1-lb'), '/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+              },
+              "frontendPort": 22,
+              "idleTimeoutInMinutes": 4,
+              "probe": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-1-lb'), '/probes/ssh-health-probe')]"
+              },
+              "protocol": "Tcp"
+            }
+          },
+          {
+            "name": "tcp-443-rule",
+            "properties": {
+              "backendAddressPool": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-1-lb'), '/backendAddressPools/BackendPool')]"
+              },
+              "backendPort": 443,
+              "disableOutboundSnat": true,
+              "enableFloatingIP": false,
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-1-lb'), '/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+              },
+              "frontendPort": 443,
+              "idleTimeoutInMinutes": 4,
+              "probe": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-1-lb'), '/probes/ssh-health-probe')]"
+              },
+              "protocol": "Tcp"
+            }
+          },
+          {
+            "name": "udp-53-rule",
+            "properties": {
+              "backendAddressPool": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-1-lb'), '/backendAddressPools/BackendPool')]"
+              },
+              "backendPort": 53,
+              "disableOutboundSnat": true,
+              "enableFloatingIP": false,
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-1-lb'), '/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+              },
+              "frontendPort": 53,
+              "idleTimeoutInMinutes": 4,
+              "probe": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-1-lb'), '/probes/ssh-health-probe')]"
+              },
+              "protocol": "Udp"
+            }
+          }
+        ],
+        "probes": [
+          {
+            "name": "ssh-health-probe",
+            "properties": {
+              "intervalInSeconds": 5,
+              "numberOfProbes": 2,
+              "port": 22,
+              "protocol": "Tcp"
+            }
+          }
+        ]
+      },
+      "sku": {
+        "name": "Standard"
+      },
+      "type": "Microsoft.Network/loadBalancers"
+    },
+    {
+      "apiVersion": "2023-05-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', 'canonical-vnet')]",
+        "[resourceId('Microsoft.Storage/storageAccounts', 'acicanonicalfiles01')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', 'acicanonicalfiles01', 'default', 'workspace-2')]"
+      ],
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "location": "northeurope",
+      "name": "canonical-2",
+      "properties": {
+        "confidentialComputeProperties": {
+          "ccePolicy": "Y2Fub25pY2FsLWN1c3RvbS1jY2UtcG9saWN5"
+        },
+        "containers": [
+          {
+            "name": "canonical-1-0",
+            "properties": {
+              "command": [
+                "/bin/sh",
+                "-c",
+                "set -eu\nif [ \"$(id -u)\" -ne 0 ]; then\n    echo 'aci-spinup SSH bootstrap requires the container image to run as root' >&2\n    exit 1\nfi\nprintf 'Fabric_NodeIPOrFQDN=%s\\n' \"${Fabric_NodeIPOrFQDN:-}\" >> /aci_env\nprintf 'UVM_SECURITY_CONTEXT_DIR=%s\\n' \"${UVM_SECURITY_CONTEXT_DIR:-}\" >> /aci_env\nexport DEBIAN_FRONTEND=noninteractive\napt-get update\napt-get install -y --no-install-recommends openssh-server ca-certificates\nrm -rf /var/lib/apt/lists/*\nmkdir -p /root/.ssh /run/sshd\nchmod 700 /root/.ssh\nprintf '%s\\n' \"$SSH_ADMIN_KEY\" > /root/.ssh/authorized_keys\nchmod 600 /root/.ssh/authorized_keys\nssh-keygen -A\ncat >> /etc/ssh/sshd_config <<'ACI_SPINUP_SSH_CONFIG'\nPermitRootLogin yes\nPubkeyAuthentication yes\nPasswordAuthentication no\nACI_SPINUP_SSH_CONFIG\nexec /usr/sbin/sshd -D -e     -o PermitRootLogin=yes     -o PubkeyAuthentication=yes     -o PasswordAuthentication=no"
+              ],
+              "environmentVariables": [
+                {
+                  "name": "SSH_ADMIN_KEY",
+                  "value": "ssh-ed25519 CANONICAL fixture@example.invalid"
+                }
+              ],
+              "image": "example.invalid/aci-spinup/canonical:1",
+              "ports": [
+                {
+                  "port": 22,
+                  "protocol": "TCP"
+                },
+                {
+                  "port": 443,
+                  "protocol": "TCP"
+                },
+                {
+                  "port": 53,
+                  "protocol": "UDP"
+                }
+              ],
+              "resources": {
+                "requests": {
+                  "cpu": 8,
+                  "memoryInGB": 32
+                }
+              },
+              "securityContext": {
+                "privileged": true
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/mnt/workspace",
+                  "name": "azurefiles2",
+                  "readOnly": false
+                }
+              ]
+            }
+          }
+        ],
+        "ipAddress": {
+          "ip": "10.0.0.5",
+          "ports": [
+            {
+              "port": 22,
+              "protocol": "TCP"
+            },
+            {
+              "port": 443,
+              "protocol": "TCP"
+            },
+            {
+              "port": 53,
+              "protocol": "UDP"
+            }
+          ],
+          "type": "Private"
+        },
+        "osType": "Linux",
+        "restartPolicy": "Never",
+        "sku": "Confidential",
+        "subnetIds": [
+          {
+            "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'canonical-vnet', 'default')]"
+          }
+        ],
+        "volumes": [
+          {
+            "azureFile": {
+              "shareName": "workspace-2",
+              "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', 'acicanonicalfiles01'), '2026-04-01').keys[0].value]",
+              "storageAccountName": "acicanonicalfiles01"
+            },
+            "name": "azurefiles2"
+          }
+        ]
+      },
+      "type": "Microsoft.ContainerInstance/containerGroups"
+    },
+    {
+      "apiVersion": "2024-05-01",
+      "location": "northeurope",
+      "name": "canonical-2-lb-ip",
+      "properties": {
+        "idleTimeoutInMinutes": 4,
+        "ipTags": [
+          {
+            "ipTagType": "FirstPartyUsage",
+            "tag": "/NonProd"
+          }
+        ],
+        "publicIPAddressVersion": "IPv4",
+        "publicIPAllocationMethod": "Static"
+      },
+      "sku": {
+        "name": "Standard"
+      },
+      "type": "Microsoft.Network/publicIPAddresses"
+    },
+    {
+      "apiVersion": "2024-05-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', 'canonical-2-lb-ip')]",
+        "[resourceId('Microsoft.Network/virtualNetworks', 'canonical-vnet')]",
+        "[resourceId('Microsoft.ContainerInstance/containerGroups', 'canonical-2')]"
+      ],
+      "location": "northeurope",
+      "name": "canonical-2-lb",
+      "properties": {
+        "backendAddressPools": [
+          {
+            "name": "BackendPool",
+            "properties": {
+              "loadBalancerBackendAddresses": [
+                {
+                  "name": "canonical-2-lb-backend-address",
+                  "properties": {
+                    "ipAddress": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', 'canonical-2'), '2023-05-01').ipAddress.ip]",
+                    "subnet": {
+                      "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'canonical-vnet', 'default')]"
+                    },
+                    "virtualNetwork": {
+                      "id": "[resourceId('Microsoft.Network/virtualNetworks', 'canonical-vnet')]"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "frontendIPConfigurations": [
+          {
+            "name": "LoadBalancerFrontEnd",
+            "properties": {
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'canonical-2-lb-ip')]"
+              }
+            }
+          }
+        ],
+        "loadBalancingRules": [
+          {
+            "name": "tcp-22-rule",
+            "properties": {
+              "backendAddressPool": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-2-lb'), '/backendAddressPools/BackendPool')]"
+              },
+              "backendPort": 22,
+              "disableOutboundSnat": true,
+              "enableFloatingIP": false,
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-2-lb'), '/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+              },
+              "frontendPort": 22,
+              "idleTimeoutInMinutes": 4,
+              "probe": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-2-lb'), '/probes/ssh-health-probe')]"
+              },
+              "protocol": "Tcp"
+            }
+          },
+          {
+            "name": "tcp-443-rule",
+            "properties": {
+              "backendAddressPool": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-2-lb'), '/backendAddressPools/BackendPool')]"
+              },
+              "backendPort": 443,
+              "disableOutboundSnat": true,
+              "enableFloatingIP": false,
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-2-lb'), '/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+              },
+              "frontendPort": 443,
+              "idleTimeoutInMinutes": 4,
+              "probe": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-2-lb'), '/probes/ssh-health-probe')]"
+              },
+              "protocol": "Tcp"
+            }
+          },
+          {
+            "name": "udp-53-rule",
+            "properties": {
+              "backendAddressPool": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-2-lb'), '/backendAddressPools/BackendPool')]"
+              },
+              "backendPort": 53,
+              "disableOutboundSnat": true,
+              "enableFloatingIP": false,
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-2-lb'), '/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+              },
+              "frontendPort": 53,
+              "idleTimeoutInMinutes": 4,
+              "probe": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', 'canonical-2-lb'), '/probes/ssh-health-probe')]"
+              },
+              "protocol": "Udp"
+            }
+          }
+        ],
+        "probes": [
+          {
+            "name": "ssh-health-probe",
+            "properties": {
+              "intervalInSeconds": 5,
+              "numberOfProbes": 2,
+              "port": 22,
+              "protocol": "Tcp"
+            }
+          }
+        ]
+      },
+      "sku": {
+        "name": "Standard"
+      },
+      "type": "Microsoft.Network/loadBalancers"
+    }
+  ],
+  "variables": {}
+}

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aci-spinup"
+version = "0.1.0"
+description = "Deploy compliant Azure Container Instances with Azure CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[project.scripts]
+aci-spinup = "aci_spinup.cli:main"
+deploy-aci = "aci_spinup.cli:deploy_compat_main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

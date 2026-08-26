@@ -353,6 +353,11 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 **/__pycache__/
 *.pyc
+.venv/
+build/
+dist/
+*.egg-info/
+.aci-spinup-template-*.json
 
 # Cake - Uncomment if you are using it
 #tools/**
