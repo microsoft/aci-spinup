@@ -20,14 +20,9 @@ NAT_GATEWAY_TYPE = "Microsoft.Network/natGateways"
 NETWORK_SECURITY_GROUP_TYPE = "Microsoft.Network/networkSecurityGroups"
 VIRTUAL_NETWORK_TYPE = "Microsoft.Network/virtualNetworks"
 SUBNET_TYPE = "Microsoft.Network/virtualNetworks/subnets"
-LOAD_BALANCER_TYPE = "Microsoft.Network/loadBalancers"
 CONTAINER_GROUP_TYPE = "Microsoft.ContainerInstance/containerGroups"
 STORAGE_ACCOUNT_TYPE = "Microsoft.Storage/storageAccounts"
 FILE_SHARE_TYPE = "Microsoft.Storage/storageAccounts/fileServices/shares"
-
-FRONTEND_NAME = "LoadBalancerFrontEnd"
-BACKEND_POOL_NAME = "BackendPool"
-SSH_PROBE_NAME = "ssh-health-probe"
 
 # Kept for compatibility with the legacy tool. This policy allows all
 # operations and is suitable only for development workloads.
@@ -413,117 +408,6 @@ class ContainerGroup:
         }
 
 
-@dataclass(frozen=True)
-class LoadBalancer:
-    name: str
-    location: str
-    public_ip_name: str
-    vnet_name: str
-    subnet_name: str
-    container_group_name: str
-    backend_address_name: str
-    ports: tuple[Port, ...]
-
-    def to_dict(self) -> dict[str, Any]:
-        public_ip_id = arm_resource_id(PUBLIC_IP_TYPE, self.public_ip_name)
-        vnet_id = arm_resource_id(VIRTUAL_NETWORK_TYPE, self.vnet_name)
-        subnet_id = arm_resource_id(
-            SUBNET_TYPE, self.vnet_name, self.subnet_name
-        )
-        container_group_id = arm_resource_id(
-            CONTAINER_GROUP_TYPE, self.container_group_name
-        )
-        container_group_ip = (
-            f"[reference(resourceId('{CONTAINER_GROUP_TYPE}', "
-            f"'{self.container_group_name}'), "
-            f"'{ACI_API_VERSION}').ipAddress.ip]"
-        )
-        frontend_id = (
-            f"[concat(resourceId('{LOAD_BALANCER_TYPE}', '{self.name}'), "
-            f"'/frontendIPConfigurations/{FRONTEND_NAME}')]"
-        )
-        backend_id = (
-            f"[concat(resourceId('{LOAD_BALANCER_TYPE}', '{self.name}'), "
-            f"'/backendAddressPools/{BACKEND_POOL_NAME}')]"
-        )
-        probe_id = (
-            f"[concat(resourceId('{LOAD_BALANCER_TYPE}', '{self.name}'), "
-            f"'/probes/{SSH_PROBE_NAME}')]"
-        )
-        rules = []
-        for port in self.ports:
-            rules.append(
-                {
-                    "name": load_balancer_rule_name(port),
-                    "properties": {
-                        "frontendIPConfiguration": {"id": frontend_id},
-                        "backendAddressPool": {"id": backend_id},
-                        # Azure Load Balancer has no UDP probe. SSH runs on every
-                        # node, so UDP rules use the valid TCP/22 health probe.
-                        "probe": {"id": probe_id},
-                        "protocol": port.arm_protocol,
-                        "frontendPort": port.number,
-                        "backendPort": port.number,
-                        "enableFloatingIP": False,
-                        "idleTimeoutInMinutes": 4,
-                        "disableOutboundSnat": True,
-                    },
-                }
-            )
-
-        return {
-            "type": LOAD_BALANCER_TYPE,
-            "apiVersion": NETWORK_API_VERSION,
-            "name": self.name,
-            "location": self.location,
-            "sku": {"name": "Standard"},
-            "dependsOn": [
-                public_ip_id,
-                vnet_id,
-                container_group_id,
-            ],
-            "properties": {
-                "frontendIPConfigurations": [
-                    {
-                        "name": FRONTEND_NAME,
-                        "properties": {
-                            "publicIPAddress": {"id": public_ip_id}
-                        },
-                    }
-                ],
-                "backendAddressPools": [
-                    {
-                        "name": BACKEND_POOL_NAME,
-                        "properties": {
-                            "loadBalancerBackendAddresses": [
-                                {
-                                    "name": self.backend_address_name,
-                                    "properties": {
-                                        "virtualNetwork": {"id": vnet_id},
-                                        "subnet": {"id": subnet_id},
-                                        "ipAddress": container_group_ip,
-                                    },
-                                }
-                            ]
-                        },
-                    }
-                ],
-                "probes": [
-                    {
-                        "name": SSH_PROBE_NAME,
-                        "properties": {
-                            "port": 22,
-                            "protocol": "Tcp",
-                            "intervalInSeconds": 5,
-                            "numberOfProbes": 2,
-                        },
-                    }
-                ],
-                "loadBalancingRules": rules,
-            },
-        }
-
-
 ArmResource = (
     PublicIPAddress
     | NatGateway
@@ -532,7 +416,6 @@ ArmResource = (
     | StorageAccount
     | FileShare
     | ContainerGroup
-    | LoadBalancer
 )
 
 
@@ -562,9 +445,6 @@ class NodePlan:
     container_group_name: str
     container_name: str
     requested_private_ip: str
-    load_balancer_name: str
-    public_ip_name: str
-    backend_address_name: str
     share_name: str | None
 
 
@@ -610,12 +490,8 @@ class DeploymentTopology:
             )
 
         for node in self.nodes:
-            ids.update(
-                {
-                    top(CONTAINER_GROUP_TYPE, node.container_group_name),
-                    top(PUBLIC_IP_TYPE, node.public_ip_name),
-                    top(LOAD_BALANCER_TYPE, node.load_balancer_name),
-                }
+            ids.add(
+                top(CONTAINER_GROUP_TYPE, node.container_group_name)
             )
         return ids
 
@@ -652,22 +528,6 @@ def nat_gateway_name_for_vnet(vnet_name: str) -> str:
 
 def nat_public_ip_name_for_vnet(vnet_name: str) -> str:
     return f"{resource_name_prefix_from_vnet_name(vnet_name)}-nat-ip"
-
-
-def load_balancer_name(container_group_name: str) -> str:
-    return f"{container_group_name}-lb"
-
-
-def load_balancer_public_ip_name(container_group_name: str) -> str:
-    return f"{container_group_name}-lb-ip"
-
-
-def load_balancer_backend_address_name(load_balancer: str) -> str:
-    return f"{load_balancer}-backend-address"
-
-
-def load_balancer_rule_name(port: Port) -> str:
-    return f"{port.slug}-rule"
 
 
 def effective_ports(ports: tuple[Port, ...]) -> tuple[Port, ...]:
@@ -721,7 +581,6 @@ def validate_deployment_name(name: str, node_count: int) -> None:
     last_node_number = node_count
     last_node_index = node_count - 1
     container_group_name = f"{name}-{last_node_number}"
-    load_balancer = load_balancer_name(container_group_name)
     generated_names = (
         ("ARM deployment", f"{name}-deployment", 64),
         ("container group", container_group_name, 63),
@@ -730,17 +589,6 @@ def validate_deployment_name(name: str, node_count: int) -> None:
         ("NAT gateway", f"{name}-nat", 80),
         ("NAT public IP", f"{name}-nat-ip", 80),
         ("network security group", f"{name}-vnet-nsg", 80),
-        ("load balancer", load_balancer, 80),
-        (
-            "load balancer public IP",
-            load_balancer_public_ip_name(container_group_name),
-            80,
-        ),
-        (
-            "load balancer backend address",
-            load_balancer_backend_address_name(load_balancer),
-            80,
-        ),
     )
     for label, generated_name, maximum in generated_names:
         if len(generated_name) > maximum:
@@ -880,48 +728,32 @@ def build_deployment_topology(config: DeployConfig) -> DeploymentTopology:
         container_group_name = f"{config.name}-{node_index + 1}"
         container_name = f"{config.name}-{node_index}-0"
         private_ip = f"10.0.0.{node_index + 4}"
-        lb_name = load_balancer_name(container_group_name)
-        lb_ip_name = load_balancer_public_ip_name(container_group_name)
-        backend_name = load_balancer_backend_address_name(lb_name)
         mount = node_mounts[node_index]
         share_name = mount[0] if mount else None
         mount_path = mount[1] if mount else None
-        resources.extend(
-            [
-                ContainerGroup(
-                    name=container_group_name,
-                    container_name=container_name,
-                    location=config.location,
-                    image=config.image,
-                    ssh_public_key=config.ssh_public_key,
-                    install_mode=config.install_mode,
-                    ports=ports,
-                    cpus=config.cpus,
-                    ram_gb=config.ram_gb,
-                    sku=config.sku,
-                    vnet_name=vnet_name,
-                    subnet_name=subnet_name,
-                    private_ip=private_ip,
-                    cce_policy=config.cce_policy,
-                    storage_account_name=storage_account_name,
-                    share_name=share_name,
-                    mount_path=mount_path,
-                    volume_name=(
-                        f"azurefiles{node_index + 1}" if mount else None
-                    ),
+        resources.append(
+            ContainerGroup(
+                name=container_group_name,
+                container_name=container_name,
+                location=config.location,
+                image=config.image,
+                ssh_public_key=config.ssh_public_key,
+                install_mode=config.install_mode,
+                ports=ports,
+                cpus=config.cpus,
+                ram_gb=config.ram_gb,
+                sku=config.sku,
+                vnet_name=vnet_name,
+                subnet_name=subnet_name,
+                private_ip=private_ip,
+                cce_policy=config.cce_policy,
+                storage_account_name=storage_account_name,
+                share_name=share_name,
+                mount_path=mount_path,
+                volume_name=(
+                    f"azurefiles{node_index + 1}" if mount else None
                 ),
-                PublicIPAddress(lb_ip_name, config.location),
-                LoadBalancer(
-                    name=lb_name,
-                    location=config.location,
-                    public_ip_name=lb_ip_name,
-                    vnet_name=vnet_name,
-                    subnet_name=subnet_name,
-                    container_group_name=container_group_name,
-                    backend_address_name=backend_name,
-                    ports=ports,
-                ),
-            ]
+            )
         )
         nodes.append(
             NodePlan(
@@ -929,17 +761,8 @@ def build_deployment_topology(config: DeployConfig) -> DeploymentTopology:
                 container_group_name=container_group_name,
                 container_name=container_name,
                 requested_private_ip=private_ip,
-                load_balancer_name=lb_name,
-                public_ip_name=lb_ip_name,
-                backend_address_name=backend_name,
                 share_name=share_name,
             )
-        )
-
-    if len(resources) > 800:
-        raise ValueError(
-            "generated ARM template exceeds the 800 top-level resource limit "
-            f"after expansion ({len(resources)} resources)"
         )
 
     return DeploymentTopology(

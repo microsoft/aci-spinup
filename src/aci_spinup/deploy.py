@@ -463,23 +463,6 @@ def _container_ip_arguments(
     ]
 
 
-def _public_ip_arguments(
-    request: DeployRequest, public_ip_name: str
-) -> list[str]:
-    return [
-        "network",
-        "public-ip",
-        "show",
-        "--resource-group",
-        request.topology.config.resource_group,
-        "--name",
-        public_ip_name,
-        "--query",
-        "ipAddress",
-        "--only-show-errors",
-    ]
-
-
 def _write_template(path: Path, topology: DeploymentTopology) -> None:
     try:
         path.write_text(topology.template.to_json(), encoding="utf-8")
@@ -535,33 +518,19 @@ def deployment_dry_run(
         )
     )
     for node in request.topology.nodes:
-        steps.extend(
-            [
-                _command_step(
-                    cli.command(
-                        [
-                            *_container_ip_arguments(
-                                request, node.container_group_name
-                            ),
-                            "--output",
-                            "tsv",
-                        ]
-                    ),
-                    f"read assigned private IP for {node.container_group_name}",
+        steps.append(
+            _command_step(
+                cli.command(
+                    [
+                        *_container_ip_arguments(
+                            request, node.container_group_name
+                        ),
+                        "--output",
+                        "tsv",
+                    ]
                 ),
-                _command_step(
-                    cli.command(
-                        [
-                            *_public_ip_arguments(
-                                request, node.public_ip_name
-                            ),
-                            "--output",
-                            "tsv",
-                        ]
-                    ),
-                    f"read public IP for {node.container_group_name}",
-                ),
-            ]
+                f"read assigned private IP for {node.container_group_name}",
+            )
         )
     subscription_token = _dry_run_subscription_token(request.subscription)
     return {
@@ -597,17 +566,11 @@ def _read_node_ips(
                 f"{node.container_group_name} did not report a private IP; "
                 "deployment result is incomplete"
             )
-        public_ip = cli.run_tsv(
-            _public_ip_arguments(request, node.public_ip_name)
-        )
         mappings.append(
             {
                 "containerGroup": node.container_group_name,
                 "requestedPrivateIp": node.requested_private_ip,
                 "privateIp": private_ip,
-                "publicIp": public_ip,
-                "loadBalancer": node.load_balancer_name,
-                "backendAddress": node.backend_address_name,
             }
         )
     return mappings
@@ -803,10 +766,7 @@ def render_human(result: dict[str, Any]) -> None:
                 f"{node['privateIp']} instead of "
                 f"{node['requestedPrivateIp']}."
             )
-        print(
-            f"{node['containerGroup']}: "
-            f"private={node['privateIp']} public={node['publicIp']}"
-        )
+        print(f"{node['containerGroup']}: private={node['privateIp']}")
 
 
 def run_deploy(request: DeployRequest) -> int:
@@ -840,6 +800,6 @@ def run_deploy(request: DeployRequest) -> int:
             for node in result["nodes"]:
                 print(
                     f"ssh -i {shlex.quote(request.ssh_private_key_path)} "
-                    f"root@{node['publicIp']} -p 22"
+                    f"root@{node['privateIp']} -p 22"
                 )
     return 0

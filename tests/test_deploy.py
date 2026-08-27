@@ -72,8 +72,6 @@ class FakeDeploymentCLI(FakeGroupCLI):
         self.tsv_calls.append(arguments)
         if arguments[:2] == ["container", "show"]:
             return "10.0.0.9"
-        if arguments[:2] == ["network", "public-ip"]:
-            return "203.0.113.10"
         raise AssertionError(f"unexpected TSV command: {arguments}")
 
 
@@ -114,7 +112,7 @@ class ResourceGroupTests(unittest.TestCase):
         )
         self.assertEqual([], result["warnings"])
 
-    def test_execute_deployment_reads_ips_without_mutating_backend(self):
+    def test_execute_deployment_reads_private_ips_only(self):
         cli = FakeDeploymentCLI()
         result = execute_deployment(deploy_request(), cli)
 
@@ -126,14 +124,8 @@ class ResourceGroupTests(unittest.TestCase):
             ],
             [command[:2] for command in cli.run_calls],
         )
-        self.assertFalse(
-            any(
-                "address-pool" in " ".join(command)
-                for command in cli.run_calls + cli.tsv_calls
-            )
-        )
         self.assertEqual(
-            [["container", "show"], ["network", "public-ip"]],
+            [["container", "show"]],
             [command[:2] for command in cli.tsv_calls],
         )
         self.assertEqual(
@@ -141,9 +133,6 @@ class ResourceGroupTests(unittest.TestCase):
                 "containerGroup": "demo-1",
                 "requestedPrivateIp": "10.0.0.4",
                 "privateIp": "10.0.0.9",
-                "publicIp": "203.0.113.10",
-                "loadBalancer": "demo-1-lb",
-                "backendAddress": "demo-1-lb-backend-address",
             },
             result["nodes"][0],
         )

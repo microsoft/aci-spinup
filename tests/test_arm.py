@@ -51,7 +51,7 @@ class ArmTemplateTests(unittest.TestCase):
         self.assertTrue(
             all("tags" not in item for item in template["resources"])
         )
-        self.assertEqual(2, len(public_ips))
+        self.assertEqual(1, len(public_ips))
         for public_ip in public_ips:
             self.assertEqual(
                 [{"ipTagType": "FirstPartyUsage", "tag": "/NonProd"}],
@@ -116,45 +116,20 @@ class ArmTemplateTests(unittest.TestCase):
             )
         )
         self.assertEqual(
-            3,
-            sum(
-                item["type"] == "Microsoft.Network/loadBalancers"
-                for item in resources
-            ),
-        )
-        for node_number in range(1, 4):
-            lb = resource(
-                topology.template.to_dict(),
-                "Microsoft.Network/loadBalancers",
-                f"demo-{node_number}-lb",
-            )
-            container_id = (
-                "[resourceId("
-                "'Microsoft.ContainerInstance/containerGroups', "
-                f"'demo-{node_number}')]"
-            )
-            self.assertIn(container_id, lb["dependsOn"])
-            backend = lb["properties"]["backendAddressPools"][0][
-                "properties"
-            ]["loadBalancerBackendAddresses"][0]
-            self.assertEqual(
-                (
-                    "[reference(resourceId("
-                    "'Microsoft.ContainerInstance/containerGroups', "
-                    f"'demo-{node_number}'), "
-                    "'2023-05-01').ipAddress.ip]"
-                ),
-                backend["properties"]["ipAddress"],
-            )
-        self.assertEqual(
-            4,
+            1,
             sum(
                 item["type"] == "Microsoft.Network/publicIPAddresses"
                 for item in resources
             ),
         )
+        self.assertFalse(
+            any(
+                item["type"] == "Microsoft.Network/loadBalancers"
+                for item in resources
+            )
+        )
 
-    def test_all_ports_get_rules_and_udp_uses_tcp_probe(self):
+    def test_all_ports_are_exposed_by_aci_and_nsg(self):
         topology = build_deployment_topology(
             self.config(
                 ports=(
@@ -165,79 +140,39 @@ class ArmTemplateTests(unittest.TestCase):
             )
         )
         template = topology.template.to_dict()
-        lb = resource(
-            template, "Microsoft.Network/loadBalancers", "demo-1-lb"
+        nsg = resource(
+            template,
+            "Microsoft.Network/networkSecurityGroups",
+            "demo-vnet-nsg",
         )
-        rules = lb["properties"]["loadBalancingRules"]
+        rules = nsg["properties"]["securityRules"]
         self.assertEqual(
-            {"tcp-22-rule", "tcp-8080-rule", "udp-53-rule", "udp-8080-rule"},
+            {
+                "allow-tcp-22",
+                "allow-tcp-8080",
+                "allow-udp-53",
+                "allow-udp-8080",
+            },
             {rule["name"] for rule in rules},
         )
         self.assertEqual(
             {"Tcp", "Udp"},
             {rule["properties"]["protocol"] for rule in rules},
         )
-        probe = lb["properties"]["probes"][0]
-        self.assertEqual(("Tcp", 22), (
-            probe["properties"]["protocol"],
-            probe["properties"]["port"],
-        ))
-        self.assertTrue(
-            all(
-                "ssh-health-probe" in rule["properties"]["probe"]["id"]
-                for rule in rules
-            )
-        )
         container = resource(
             template, "Microsoft.ContainerInstance/containerGroups", "demo-1"
         )
-        self.assertIn(
-            {"protocol": "TCP", "port": 22},
-            container["properties"]["ipAddress"]["ports"],
-        )
-
-    def test_load_balancer_backend_references_deployed_container_ip(self):
-        topology = build_deployment_topology(self.config())
-        template = topology.template.to_dict()
-        lb = resource(
-            template, "Microsoft.Network/loadBalancers", "demo-1-lb"
-        )
-        self.assertIn(
-            "[resourceId('Microsoft.ContainerInstance/containerGroups', "
-            "'demo-1')]",
-            lb["dependsOn"],
-        )
-        addresses = lb["properties"]["backendAddressPools"][0]["properties"][
-            "loadBalancerBackendAddresses"
-        ]
         self.assertEqual(
-            [
-                {
-                    "name": "demo-1-lb-backend-address",
-                    "properties": {
-                        "virtualNetwork": {
-                            "id": (
-                                "[resourceId("
-                                "'Microsoft.Network/virtualNetworks', "
-                                "'demo-vnet')]"
-                            )
-                        },
-                        "subnet": {
-                            "id": (
-                                "[resourceId("
-                                "'Microsoft.Network/virtualNetworks/subnets', "
-                                "'demo-vnet', 'default')]"
-                            )
-                        },
-                        "ipAddress": (
-                            "[reference(resourceId("
-                            "'Microsoft.ContainerInstance/containerGroups', "
-                            "'demo-1'), '2023-05-01').ipAddress.ip]"
-                        ),
-                    },
-                }
-            ],
-            addresses,
+            {
+                ("TCP", 22),
+                ("TCP", 8080),
+                ("UDP", 53),
+                ("UDP", 8080),
+            },
+            {
+                (port["protocol"], port["port"])
+                for port in container["properties"]["ipAddress"]["ports"]
+            },
         )
 
     def test_effective_ports_are_limited_to_five_including_ssh(self):
@@ -367,18 +302,6 @@ class ArmTemplateTests(unittest.TestCase):
                 self.config(cce_policy="not-base64!")
             )
 
-    def test_expanded_template_is_limited_to_800_top_level_resources(self):
-        with self.assertRaisesRegex(ValueError, "800 top-level resource"):
-            build_deployment_topology(
-                self.config(
-                    node_count=200,
-                    azure_file_mounts=(
-                        AzureFileMountSpec("workspace", "/mnt/workspace"),
-                    ),
-                    azure_file_share_prefix=True,
-                )
-            )
-
     def test_vnet_attached_sku_compute_limits(self):
         for sku, cpu_limit, ram_limit in (
             ("standard", 31, 240),
@@ -439,7 +362,8 @@ class ArmTemplateTests(unittest.TestCase):
         joined = "\n".join(sorted(ids))
         self.assertIn("/virtualNetworks/demo-vnet", joined)
         self.assertIn("/storageAccounts/", joined)
-        self.assertIn("/loadBalancers/demo-1-lb", joined)
+        self.assertNotIn("/loadBalancers/", joined)
+        self.assertNotIn("/publicIPAddresses/demo-1", joined)
         self.assertNotIn("/subnets/", joined)
         self.assertNotIn("/securityRules/", joined)
         self.assertNotIn("/backendAddressPools/", joined)
