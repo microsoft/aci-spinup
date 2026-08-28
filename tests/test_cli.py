@@ -6,7 +6,6 @@ import unittest
 from unittest.mock import patch
 
 from aci_spinup.cli import build_parser, main
-from aci_spinup.repair import config_from_args
 
 
 class CLIParsingTests(unittest.TestCase):
@@ -50,44 +49,6 @@ class CLIParsingTests(unittest.TestCase):
                 ],
             )
 
-    def test_repair_requires_exactly_one_selection_mode(self):
-        base = [
-            "repair-subnet-outbound",
-            "--resource-group",
-            "rg",
-            "--vnet",
-            "vnet",
-        ]
-        self.parse_error(build_parser(), base)
-        self.parse_error(
-            build_parser(), [*base, "--all", "--subnet", "default"]
-        )
-        named = build_parser().parse_args([*base, "--subnet", "one,two"])
-        self.assertEqual(["one,two"], named.subnet)
-        all_subnets = build_parser().parse_args([*base, "--all"])
-        self.assertTrue(all_subnets.all)
-
-    def test_reserved_named_subnet_requires_explicit_override(self):
-        parser = build_parser()
-        arguments = [
-            "repair-subnet-outbound",
-            "--resource-group",
-            "rg",
-            "--vnet",
-            "vnet",
-            "--subnet",
-            "GatewaySubnet",
-        ]
-        args = parser.parse_args(arguments)
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                config_from_args(args.command_parser, args)
-        args = parser.parse_args(
-            [*arguments, "--allow-reserved-subnets"]
-        )
-        config = config_from_args(args.command_parser, args)
-        self.assertEqual(("GatewaySubnet",), config.subnet_names)
-
     def test_empty_azure_identifiers_are_rejected(self):
         with self.assertRaises(SystemExit):
             main(
@@ -99,22 +60,6 @@ class CLIParsingTests(unittest.TestCase):
                     "--dry-run",
                 ]
             )
-        with self.assertRaises(SystemExit):
-            main(
-                [
-                    "repair-subnet-outbound",
-                    "--resource-group",
-                    "rg",
-                    "--vnet",
-                    "",
-                    "--subnet",
-                    "app",
-                    "--location",
-                    "northeurope",
-                    "--dry-run",
-                ]
-            )
-
     def test_non_key_ssh_file_is_rejected(self):
         with self.assertRaises(SystemExit):
             main(
@@ -157,30 +102,6 @@ class CLIParsingTests(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertTrue(payload["dryRun"])
         self.assertEqual("test-dry", payload["resourceGroup"])
-        run.assert_not_called()
-
-    @patch("aci_spinup.azure.subprocess.run")
-    def test_named_repair_dry_run_with_location_does_not_call_azure(self, run):
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            result = main(
-                [
-                    "repair-subnet-outbound",
-                    "--resource-group",
-                    "rg",
-                    "--vnet",
-                    "vnet",
-                    "--subnet",
-                    "app",
-                    "--location",
-                    "northeurope",
-                    "--dry-run",
-                    "--output",
-                    "json",
-                ]
-            )
-        self.assertEqual(0, result)
-        self.assertFalse(json.loads(output.getvalue())["lookupPerformed"])
         run.assert_not_called()
 
     @patch("aci_spinup.azure.subprocess.run")

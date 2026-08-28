@@ -2,8 +2,7 @@
 
 A collection of scripts that make it easier to deploy compliant Azure
 Container Instance resources. Deployments use private ACI groups, compliant
-NAT outbound access, and NSG rules for `CorpNetPublic`. The CLI can also repair
-outbound access on existing subnets.
+NAT outbound access, and NSG rules for `CorpNetPublic`.
 
 After installing the package, run a minimal deployment with:
 
