@@ -1,92 +1,53 @@
 # aci-spinup
 
-Python scripts for compliant Azure Container Instance deployments.
+A collection of scripts that make it easier to deploy compliant Azure
+Container Instance resources. Deployments use private ACI groups, compliant
+NAT outbound access, and NSG rules for `CorpNetPublic`. The CLI can also repair
+outbound access on existing subnets.
 
-`aci-spinup deploy` creates private ACI groups in a delegated subnet with:
-
-- a NAT gateway and a `FirstPartyUsage=/NonProd` outbound public IP
-- `defaultOutboundAccess=false`
-- an NSG that permits configured ports from `CorpNetPublic`
-- SSH on TCP port 22
-
-The deployment has no public ingress resource. Connect from a network that can
-route to the private subnet.
-
-## Install
-
-You need Python 3.11 or later, the Azure CLI, and an Azure login.
+After installing the package, run a minimal deployment with:
 
 ```console
-az login
 python3 -m pip install .
-aci-spinup --help
-```
-
-The package installs these entrypoints:
-
-- `aci-spinup deploy`
-- `aci-spinup repair-subnet-outbound`
-- `deploy-aci`, an alias for `aci-spinup deploy`
-
-## Deploy ACI
-
-```console
 aci-spinup deploy \
-  --name demo \
   --resource-group-prefix dev \
   --image ghcr.io/example/workload:latest \
   --ssh-key ~/.ssh/id_ed25519.pub
 ```
 
-Deployments default to confidential ACI with the legacy allow-all development
-CCE policy. Pass `--cce-policy-file PATH` to use a generated policy, or pass
-`--sku standard` for standard ACI.
+To run it directly from the repository without installing:
 
-Use `--num-containers`, `--tcp-ports`, `--udp-ports`, and
-`--azure-file-mount` to change the topology. Run `aci-spinup deploy --help` for
-all options and limits.
+```console
+PYTHONPATH=src python3 -m aci_spinup deploy \
+  --resource-group-prefix dev \
+  --image ghcr.io/example/workload:latest \
+  --ssh-key ~/.ssh/id_ed25519.pub
+```
 
-To inspect the commands and ARM template without changing Azure, add
-`--dry-run`. Add `--output-template PATH` to keep the generated template.
-
-## Delete a deployment
-
-Recreate the original command and add `--delete`:
+## Chonker example
 
 ```console
 aci-spinup deploy \
-  --name demo \
-  --resource-group-prefix dev \
-  --delete
+  --subscription "Azure Research Subs" \
+  --resource-group dev-cluster \
+  --name cluster \
+  --region northeurope \
+  --image ghcr.io/example/workload:latest \
+  --ssh-key ~/.ssh/id_ed25519.pub \
+  --sku standard \
+  --cpus 16 \
+  --ram 64 \
+  --num-containers 3 \
+  --install ubuntu \
+  --tcp-ports 22,443,8080 \
+  --udp-ports 5353 \
+  --azure-file-mount share=workspace,path=/mnt/workspace \
+  --azure-file-share-prefix \
+  --azure-file-account-name uniqueaccountname123 \
+  --output-template deployment.json \
+  --output json \
+  --verbose
 ```
 
-Deletion works only for resource groups managed as a whole. It is unavailable
-with `--use-existing-resource-group`.
-
-The command compares the group's top-level ARM resources with the generated
-topology twice. Unexpected resources stop deletion. The check does not inspect
-nested resources, extension resources, or data-plane contents.
-
-## Repair subnet outbound access
-
-```console
-aci-spinup repair-subnet-outbound \
-  --resource-group network-rg \
-  --vnet workload-vnet \
-  --subnet app,workers
-```
-
-For each selected subnet, the command sets
-`defaultOutboundAccess=false`. It preserves an existing NAT gateway. If no NAT
-gateway is attached, it creates or reuses the configured compliant public IP
-and NAT gateway, then attaches the NAT gateway.
-
-Use `--all` instead of `--subnet` to select non-reserved subnets. Run
-`aci-spinup repair-subnet-outbound --help` for all options.
-
-## Check changes
-
-```console
-PYTHONPATH=src python3 -m unittest discover -s tests
-python3 scripts/verify_template.py
-```
+Run `aci-spinup --help` or `aci-spinup <command> --help` for the full command
+surface.

@@ -46,17 +46,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_deploy_compat_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="deploy-aci",
-        description=(
-            "Compatibility entrypoint for `aci-spinup deploy`."
-        ),
-    )
-    add_deploy_arguments(parser)
-    return parser
-
-
 def _report_error(error: AciSpinupError) -> int:
     print(f"error: {error}", file=sys.stderr)
     return 1
@@ -82,12 +71,3 @@ def main(argv: list[str] | None = None) -> int:
         return _report_error(error)
     parser.error(f"unsupported command: {args.command}")
     return 2
-
-
-def deploy_compat_main(argv: list[str] | None = None) -> int:
-    parser = build_deploy_compat_parser()
-    args = parser.parse_args(argv)
-    try:
-        return run_deploy(request_from_args(parser, args))
-    except AciSpinupError as error:
-        return _report_error(error)

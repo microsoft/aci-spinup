@@ -5,11 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from aci_spinup.cli import (
-    build_deploy_compat_parser,
-    build_parser,
-    main,
-)
+from aci_spinup.cli import build_parser, main
 from aci_spinup.repair import config_from_args
 
 
@@ -133,21 +129,6 @@ class CLIParsingTests(unittest.TestCase):
                     "--dry-run",
                 ]
             )
-
-    def test_compatibility_parser_has_deploy_options_without_subcommand(self):
-        args = build_deploy_compat_parser().parse_args(
-            [
-                "--resource-group-prefix",
-                "cluster",
-                "--name",
-                "demo",
-                "--delete",
-                "--dry-run",
-            ]
-        )
-        self.assertEqual("cluster", args.resource_group_prefix)
-        self.assertTrue(args.delete)
-        self.assertTrue(args.dry_run)
 
     @patch("aci_spinup.azure.subprocess.run")
     def test_deploy_dry_run_does_not_call_azure(self, run):

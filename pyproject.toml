@@ -13,7 +13,6 @@ dependencies = []
 
 [project.scripts]
 aci-spinup = "aci_spinup.cli:main"
-deploy-aci = "aci_spinup.cli:deploy_compat_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
