@@ -1,33 +1,52 @@
-# Project
+# aci-spinup
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+A collection of scripts that make it easier to deploy compliant Azure
+Container Instance resources. Deployments use private ACI groups, compliant
+NAT outbound access, and NSG rules for `CorpNetPublic`.
 
-As the maintainer of this project, please make a few updates:
+After installing the package, run a minimal deployment with:
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+```console
+python3 -m pip install .
+aci-spinup deploy \
+  --resource-group-prefix dev \
+  --image ghcr.io/example/workload:latest \
+  --ssh-key ~/.ssh/id_ed25519.pub
+```
 
-## Contributing
+To run it directly from the repository without installing:
 
-This project welcomes contributions and suggestions.  Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit [Contributor License Agreements](https://cla.opensource.microsoft.com).
+```console
+PYTHONPATH=src python3 -m aci_spinup deploy \
+  --resource-group-prefix dev \
+  --image ghcr.io/example/workload:latest \
+  --ssh-key ~/.ssh/id_ed25519.pub
+```
 
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
+## Full example
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+```console
+aci-spinup deploy \
+  --subscription "Azure Research Subs" \
+  --resource-group dev-cluster \
+  --name cluster \
+  --region northeurope \
+  --image ghcr.io/example/workload:latest \
+  --ssh-key ~/.ssh/id_ed25519.pub \
+  --sku standard \
+  --cpus 16 \
+  --ram 64 \
+  --num-containers 3 \
+  --install ubuntu \
+  --tcp-ports 22,443,8080 \
+  --udp-ports 5353 \
+  --azure-file-mount share=workspace,path=/mnt/workspace \
+  --azure-file-share-prefix \
+  --azure-file-account-name uniqueaccountname123 \
+  --output-template deployment.json \
+  --output json \
+  --verbose
+```
 
-## Trademarks
-
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
-trademarks or logos is subject to and must follow
-[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
-Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
-Any use of third-party trademarks or logos are subject to those third-party's policies.
+Run `aci-spinup --help` or `aci-spinup <command> --help` for the full command
+surface.
