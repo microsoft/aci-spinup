@@ -24,7 +24,7 @@ PYTHONPATH=src python3 -m aci_spinup deploy \
   --ssh-key ~/.ssh/id_ed25519.pub
 ```
 
-## Chonker example
+## Full example
 
 ```console
 aci-spinup deploy \
